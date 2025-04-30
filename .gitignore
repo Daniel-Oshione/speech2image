@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+*.pyo
+venv/
+data/timit/
+data/voxceleb/
+data/coco/
+data/imagedata/
+models/checkpoints/
+*.log
+*.tmp
+*.temp
+config.json
+*.env
+.ipynb_checkpoints/
