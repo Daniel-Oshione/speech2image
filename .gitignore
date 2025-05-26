@@ -2,10 +2,7 @@ __pycache__/
 *.pyc
 *.pyo
 venv/
-data/timit/
-data/voxceleb/
-data/coco/
-data/imagedata/
+Data/
 models/checkpoints/
 *.log
 *.tmp
