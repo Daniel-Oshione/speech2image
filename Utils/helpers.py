@@ -1,50 +1,93 @@
 import os
+import cv2
+import pandas as pd
 import numpy as np
-from processing.audio_preprocessing import preprocess_audio
-from processing.image_preprocessing import preprocess_image
+import librosa
 
-def load_dataset(audio_dir, image_dir, image_size=(64, 64), audio_extension='.wav', image_extension='.jpg'):
-    """
-    Load and preprocess paired audio and image files from given directories.
+def load_flickr8k(image_dir, caption_file, image_size):
+    # Load captions
+    captions = []
+    with open(caption_file, 'r') as file:
+        for line in file.readlines()[1:]:
+            caption = line.strip().split('\t')[1]
+            captions.append(caption)
 
-    Args:
-        audio_dir (str): Path to the audio files directory.
-        image_dir (str): Path to the images directory.
-        image_size (tuple): Size to resize images to.
-        audio_extension (str): Extension of audio files (default '.wav').
-        image_extension (str): Extension of image files (default '.jpg').
+    # Load images
+    image_files = os.listdir(image_dir)
+    images = []
+    for file in image_files:
+        image = cv2.imread(os.path.join(image_dir, file))
+        image = cv2.resize(image, image_size)
+        images.append(image)
 
-    Returns:
-        audio_data (np.ndarray): Array of preprocessed audio features.
-        image_data (np.ndarray): Array of preprocessed images.
-    """
+    return np.array(images), captions
+
+def load_scenes_classification(image_dir, csv_file, image_size):
+    # Load labels
+    labels = pd.read_csv(csv_file)['label'].tolist()
+
+    # Load images
+    image_files = os.listdir(image_dir)
+    images = []
+    for file in image_files:
+        image = cv2.imread(os.path.join(image_dir, file))
+        image = cv2.resize(image, image_size)
+        images.append(image)
+
+    return np.array(images), labels
+
+def load_speech_to_image(audio_dir, image_dir, image_size):
+    # Load audio
+    audio_files = os.listdir(audio_dir)
     audio_data = []
-    image_data = []
+    for file in audio_files:
+        # Load audio file using librosa or other audio processing library
+        audio, sr = librosa.load(os.path.join(audio_dir, file))
+        # Preprocess audio data (e.g., extract MFCC features)
+        mfcc_features = librosa.feature.mfcc(audio, sr=sr)
+        audio_data.append(mfcc_features)
 
-    audio_files = [f for f in os.listdir(audio_dir) if f.lower().endswith(audio_extension)]
+    # Load images
+    image_files = os.listdir(image_dir)
+    images = []
+    for file in image_files:
+        image = cv2.imread(os.path.join(image_dir, file))
+        image = cv2.resize(image, image_size)
+        images.append(image)
 
-    for audio_file in audio_files:
-        base_name = os.path.splitext(audio_file)[0]
-        audio_path = os.path.join(audio_dir, audio_file)
-        image_file = base_name + image_extension
-        image_path = os.path.join(image_dir, image_file)
+    return np.array(audio_data), np.array(images)
 
-        if not os.path.exists(image_path):
-            print(f"Warning: Image file not found for audio '{audio_file}' - skipping.")
-            continue
-        
-        try:
-            mfcc_features = preprocess_audio(audio_path)
-            mfcc_features = np.expand_dims(mfcc_features, axis=-1)  # add channel axis
-
-            processed_image = preprocess_image(image_path, size=image_size)
+def load_vidTIMIT(data_dir, image_size):
+    # Load audio
+    audio_data = []
+    for speaker_dir in os.listdir(data_dir):
+        speaker_audio_dir = os.path.join(data_dir, speaker_dir, 'audio')
+        audio_files = os.listdir(speaker_audio_dir)
+        for file in audio_files:
+            # Load audio file using librosa or other audio processing library
+            audio, sr = librosa.load(os.path.join(speaker_audio_dir, file))
+            # Preprocess audio data or extracting MFCC features
+            mfcc_features = librosa.feature.mfcc(audio, sr=sr)
             audio_data.append(mfcc_features)
-            image_data.append(processed_image)
-        except Exception as e:
-            print(f"Error processing pair {audio_file} and {image_file}: {e}")
-            continue
 
-    audio_data = np.array(audio_data)
-    image_data = np.array(image_data)
+# Load video
+    video_data = []
+    for speaker_dir in os.listdir(data_dir):
+        speaker_video_dir = os.path.join(data_dir, speaker_dir, 'video')
+        video_files = os.listdir(speaker_video_dir)
+        for file in video_files:
+            # Load video file using OpenCV
+            cap = cv2.VideoCapture(os.path.join(speaker_video_dir, file))
+            frames = []
+            while cap.isOpened():
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                # Resize the frame to the desired size
+                frame = cv2.resize(frame, image_size)
+                frames.append(frame)
+            cap.release()
+            # Convert the frames to a numpy array
+            video_data.append(np.array(frames))
 
-    return audio_data, image_data
+    return np.array(audio_data), np.array(video_data)
