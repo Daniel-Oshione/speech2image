@@ -9,7 +9,11 @@ def load_flickr8k(image_dir, caption_file, image_size):
     captions = []
     with open(caption_file, 'r') as file:
         for line in file.readlines()[1:]:
-            caption = line.strip().split('\t')[1]
+            parts = line.strip().split('\t')
+            if len(parts) < 2:
+                # Skip malformed lines
+                continue
+            caption = parts[1]
             captions.append(caption)
 
     # Load images
