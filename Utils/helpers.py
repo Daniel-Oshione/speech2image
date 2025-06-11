@@ -52,11 +52,13 @@ def load_scenes_classification(image_dir, csv_file, image_size):
     return np.array(images), labels
 
 def load_speech_to_image(audio_dir, image_dir, image_size):
-    # Load audio
+    # Load audio recursively including subdirectories
     audio_data = []
     audio_files = []
     for root, _, files in os.walk(audio_dir):
         for file in files:
+            if not file.lower().endswith('.wav'):
+                continue
             file_path = os.path.join(root, file)
             audio_files.append(os.path.relpath(file_path, audio_dir))
             try:
@@ -69,11 +71,13 @@ def load_speech_to_image(audio_dir, image_dir, image_size):
                 print(f"Warning: Failed to load audio file {file_path}: {e}")
                 continue
 
-    # Load images recursively
+    # Load images recursively including subdirectories
     image_files = []
     images = []
     for root, _, files in os.walk(image_dir):
         for file in files:
+            if not (file.lower().endswith('.jpg') or file.lower().endswith('.jpeg') or file.lower().endswith('.png')):
+                continue
             image_path = os.path.join(root, file)
             image_files.append(os.path.relpath(image_path, image_dir))
             image = cv2.imread(image_path)
@@ -83,29 +87,72 @@ def load_speech_to_image(audio_dir, image_dir, image_size):
             image = cv2.resize(image, image_size)
             images.append(image)
 
-    # Check for matching audio and image files by filename (without extension)
-    audio_basenames = set([os.path.splitext(os.path.basename(f))[0] for f in audio_files])
-    image_basenames = set([os.path.splitext(os.path.basename(f))[0] for f in image_files])
-    common_basenames = audio_basenames.intersection(image_basenames)
+    # Adjust matching logic to consider subfolder names (e.g., Cats, Dogs)
+    # Extract subfolder name from relative path and prepend to basename for matching
+    def get_audio_key(path):
+        parts = path.replace("\\", "/").split("/")
+        if len(parts) >= 2:
+            return parts[-2] + "_" + os.path.splitext(parts[-1])[0]
+        else:
+            return os.path.splitext(parts[-1])[0]
+
+    def get_image_key(path):
+        parts = path.replace("\\", "/").split("/")
+        if len(parts) >= 2:
+            return parts[-2] + "_" + os.path.splitext(parts[-1])[0]
+        else:
+            return os.path.splitext(parts[-1])[0]
+
+    audio_keys = set(get_audio_key(f) for f in audio_files)
+    image_keys = set(get_image_key(f) for f in image_files)
 
     print(f"Audio files found: {len(audio_files)}")
     print(f"Image files found: {len(image_files)}")
-    print(f"Matching audio-image pairs found: {len(common_basenames)}")
 
-    if not common_basenames:
+    print("Audio keys:")
+    for key in sorted(audio_keys):
+        print(f"  {key}")
+    print("Image keys:")
+    for key in sorted(image_keys):
+        print(f"  {key}")
+
+    # Option 1: Match ignoring subfolder prefixes (match only by basename)
+    audio_basenames = set(os.path.splitext(os.path.basename(f))[0] for f in audio_files)
+    image_basenames = set(os.path.splitext(os.path.basename(f))[0] for f in image_files)
+    common_basenames = audio_basenames.intersection(image_basenames)
+
+    print(f"Matching audio-image pairs by basename only: {len(common_basenames)}")
+
+    # Option 2: Fuzzy matching (simple substring matching)
+    fuzzy_matches = []
+    for a_key in audio_basenames:
+        for i_key in image_basenames:
+            if a_key in i_key or i_key in a_key:
+                fuzzy_matches.append((a_key, i_key))
+    print(f"Fuzzy matching pairs found: {len(fuzzy_matches)}")
+
+    if not common_basenames and not fuzzy_matches:
         print("Warning: No matching audio-image file pairs found in SpeechToImage dataset.")
         return np.array([]), np.array([])
 
     # Filter audio_data and images to only include matching pairs
     filtered_audio_data = []
     filtered_images = []
+
+    # Define common keys as union of common_basenames and fuzzy matches keys
+    common_keys = set()
+    common_keys.update(common_basenames)
+    for a_key, i_key in fuzzy_matches:
+        common_keys.add(a_key)
+        common_keys.add(i_key)
+
     for i, audio_file in enumerate(audio_files):
-        base = os.path.splitext(os.path.basename(audio_file))[0]
-        if base in common_basenames:
+        key = get_audio_key(audio_file)
+        if key in common_keys or os.path.splitext(os.path.basename(audio_file))[0] in common_basenames:
             filtered_audio_data.append(audio_data[i])
     for i, image_file in enumerate(image_files):
-        base = os.path.splitext(os.path.basename(image_file))[0]
-        if base in common_basenames:
+        key = get_image_key(image_file)
+        if key in common_keys or os.path.splitext(os.path.basename(image_file))[0] in common_basenames:
             filtered_images.append(images[i])
 
     return np.array(filtered_audio_data), np.array(filtered_images)

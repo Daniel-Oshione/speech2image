@@ -1,6 +1,6 @@
-from Utils.helpers import load_flickr8k, load_scenes_classification, load_speech_to_image, load_vidTIMIT
-from Models.model import define_model
-from Models.train import train_model
+from Utils.helpers import load_flickr8k, load_scenes_classification
+from Models.gan_model import build_generator, build_discriminator, GAN
+from tensorflow.keras.optimizers import Adam
 import numpy as np
 
 def main():
@@ -17,26 +17,11 @@ def main():
             'image_dir': 'data/SceneClassification/images',
             'csv_file': 'data/SceneClassification/dataset.csv',
             'image_size': (64, 64),
-        },
-        {
-            'name': 'SpeechToImage',
-            'image_dir': 'data/SpeechToImage/Photos',
-            'audio_dir': 'data/SpeechToImage/Sound',
-            'image_size': (64, 64),
-        },
-        {
-            'name': 'vidTIMIT',
-            'data_dir': 'data/vidTIMIT',
-            'image_size': (64, 64),
-            'use_audio_only': True
         }
     ]
 
     speech_audio_data = []
     speech_image_data = []
-
-    video_audio_data = []
-    video_image_data = []
 
     print("Loading datasets...")
 
@@ -46,66 +31,59 @@ def main():
         if ds['name'] == 'Flickr8k':
             image_data, captions = load_flickr8k(ds['image_dir'], ds['caption_file'], ds['image_size'])
             # Flickr8k has no audio, so skip audio
+            speech_audio_data.append(np.zeros((len(image_data), 20, 44)))  # Dummy audio data with expected shape
+            speech_image_data.append(image_data)
         elif ds['name'] == 'SceneClassification':
             image_data, labels = load_scenes_classification(ds['image_dir'], ds['csv_file'], ds['image_size'])
             # SceneClassification has no audio, so skip audio
-        elif ds['name'] == 'SpeechToImage':
-            audio_data, image_data = load_speech_to_image(ds['audio_dir'], ds['image_dir'], ds['image_size'])
-            speech_audio_data.append(audio_data)
+            speech_audio_data.append(np.zeros((len(image_data), 20, 44)))  # Dummy audio data with expected shape
             speech_image_data.append(image_data)
-        elif ds['name'] == 'vidTIMIT':
-            # Use only audio data, skip video data due to corrupted files
-            audio_data, _ = load_vidTIMIT(ds['data_dir'], ds['image_size'])
-            video_audio_data.append(audio_data)
-            # Create dummy images to match audio count
-            dummy_images = np.zeros((audio_data.shape[0],) + ds['image_size'] + (3,), dtype=np.float32)
-            video_image_data.append(dummy_images)
 
     # Concatenate speech datasets
     if speech_audio_data and speech_image_data:
-        X_audio = np.concatenate(speech_audio_data, axis=0)
-        Y_images = np.concatenate(speech_image_data, axis=0)
-        # Reshape X_audio to add channel dimension if missing
-        if len(X_audio.shape) == 3:
-            X_audio = X_audio[..., np.newaxis]  # Add channel dimension
-        print(f"Total speech-to-image samples loaded: {X_audio.shape[0]}")
-        if X_audio.shape[0] == 0 or Y_images.shape[0] == 0:
-            print("Warning: Speech-to-image dataset is empty. Skipping training on this dataset.")
+        # Filter out empty arrays
+        speech_audio_data = [arr for arr in speech_audio_data if arr.size > 0]
+        speech_image_data = [arr for arr in speech_image_data if arr.size > 0]
+        if speech_audio_data:
+            X_audio = np.concatenate(speech_audio_data, axis=0)
+        else:
             X_audio = None
+        if speech_image_data:
+            Y_images = np.concatenate(speech_image_data, axis=0)
+        else:
             Y_images = None
-    else:
-        X_audio = None
-        Y_images = None
 
-    # Concatenate video datasets
-    if video_audio_data and video_image_data:
-        X_video_audio = np.concatenate(video_audio_data, axis=0)
-        Y_video_images = np.concatenate(video_image_data, axis=0)
-        # Reshape X_video_audio to add channel dimension if missing
-        if len(X_video_audio.shape) == 3:
-            X_video_audio = X_video_audio[..., np.newaxis]  # Add channel dimension
-        print(f"Total video samples loaded: {X_video_audio.shape[0]}")
-        if X_video_audio.shape[0] == 0 or Y_video_images.shape[0] == 0:
-            print("Warning: Video dataset is empty. Skipping training on this dataset.")
-            X_video_audio = None
-            Y_video_images = None
-    else:
-        X_video_audio = None
-        Y_video_images = None
+        if X_audio is not None and Y_images is not None:
+            # Reshape X_audio to add channel dimension if missing
+            if len(X_audio.shape) == 3:
+                X_audio = X_audio[..., np.newaxis]  # Add channel dimension
+            print(f"Total samples loaded: {X_audio.shape[0]}")
+            print("Starting GAN training on available datasets...")
 
-    # Choose which dataset to train on (speech or video)
-    if X_audio is not None and Y_images is not None:
-        input_shape = X_audio.shape[1:]
-        model = define_model(input_shape=input_shape)
-        print("Starting training on speech-to-image dataset...")
-        train_model(model, X_audio, Y_images, epochs=30, batch_size=64)
-        print("Training completed on speech-to-image dataset.")
-    elif X_video_audio is not None and Y_video_images is not None:
-        input_shape = X_video_audio.shape[1:]
-        model = define_model(input_shape=input_shape)
-        print("Starting training on video dataset...")
-        train_model(model, X_video_audio, Y_video_images, epochs=30, batch_size=64)
-        print("Training completed on video dataset.")
+            generator = build_generator(input_shape=X_audio.shape[1:])
+            discriminator = build_discriminator(input_shape=Y_images.shape[1:])
+            gan = GAN(generator, discriminator, lambda_perceptual=0.1)
+
+            g_optimizer = Adam(learning_rate=0.0002)
+            d_optimizer = Adam(learning_rate=0.0002)
+            gan.compile(g_optimizer, d_optimizer)
+
+            # To avoid batch size mismatch errors, disable validation_split and handle validation manually if needed
+            # To avoid batch size mismatch errors, disable validation_split and ensure dataset size is divisible by batch size
+            # Trim dataset to multiple of batch size
+            batch_size = 64
+            num_samples = (X_audio.shape[0] // batch_size) * batch_size
+            X_audio_trimmed = X_audio[:num_samples]
+            Y_images_trimmed = Y_images[:num_samples]
+
+            import tensorflow as tf
+            # Create tf.data.Dataset for custom training loop
+            dataset = tf.data.Dataset.from_tensor_slices((X_audio_trimmed, Y_images_trimmed))
+            from Models.train import custom_gan_training_loop
+            custom_gan_training_loop(gan, dataset, epochs=50, batch_size=batch_size)
+            print("GAN training completed.")
+        else:
+            print("No suitable dataset found for training.")
     else:
         print("No suitable dataset found for training.")
 
